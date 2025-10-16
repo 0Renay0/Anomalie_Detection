@@ -15,7 +15,7 @@ OUT_Q2I = os.path.join(OUT_DIR, "q2i.json")
 
 # Simulation parameters
 DT = 0.01 # time step
-T_Final = 60.0 # final time
+T_FINAL = 60.0 # final time
 NOISE_STD = 0.0 # noise
 
 # Invariants 
@@ -103,3 +103,102 @@ def basic_model_checks(data: Dict[str, Any]) -> None:
         raise SimError("'Jump' must be an object {EtatSource: {EtatDest: reset_name}}.")
     if "T" in data and not isinstance(data["T"], list):
         raise SimError("'T' must be a list of transition objects.")
+    
+    
+def simulate(data: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, int]]:
+    """
+    Simulate the hybrid automaton and generate dataset using Invs + guards + resets
+    
+    Returns:
+        - times: (N,)
+      - xs:    (N, dim_x)
+      - qs:    (N,) indices des modes
+      - q2i:   mapping {nom_mode: index}
+    """
+    basic_model_checks(data)
+    
+    Q: List[str] = data["Q"]
+    X: List[str] = data["X"]
+    q0: str = data["q0"]
+    x0: List[float] = data["x0"]
+    
+    flow = data["flow"]
+    Inv = data["Inv"]
+    Guard = data.get("Guard", {})
+    Jump = data.get("Jump", {})
+    
+    ns = bind_functions(data["functions"])
+    
+    # Encodings for modes : Q1 -> 0, Q2 -> 1 ..
+    q2i: Dict[str, int] = {q: i for i, q in enumerate(Q)}
+    
+    x = np.array(x0, dtype=float)
+    q = q0
+    t = 0.0
+
+    times = [t]
+    xs = [x.copy()]
+    qs = [q2i[q]]
+    
+    dt_max = DT
+    dt_min = DT * DT_MIN_FACTOR
+    
+    while t < T_FINAL - 1e-12:
+        dt = dt_max
+        step_accepted = False
+
+        for _ in range(MAX_HALVES + 1):
+            # Try integration in the current mode on [t, t+dt]
+            f = ns[flow[q]]
+            x_trial = step_euler(x, f, t, dt)
+
+            # Check the invariant of the current mode at the attempted point
+            if inv_ok(ns, Inv[q], x_trial):
+                q_new = q
+
+                # Check the guards at the attempted point
+                transitioned = False
+                if q in Guard:
+                    # Simple priority scheme: first guard found is taken
+                    for qdst, gname in Guard[q].items():
+                        if guard_true(ns, gname, x_trial):
+                            # Guard activated, perform the jump 
+                            rname = Jump.get(q, {}).get(qdst, None)
+                            x_after = reset(ns, rname, x_trial)
+
+                            # Check the invariant of the destination mode after reset
+                            if not inv_ok(ns, Inv[qdst], x_after):
+                                raise SimError(
+                                    f"Invariant of destination mode '{qdst}' violated at t={t+dt:.6f}"
+                                )
+
+                            q_new = qdst
+                            x_trial = x_after
+                            transitioned = True
+                            break
+
+                # Step accepted
+                t = t + dt
+                x = x_trial
+                q = q_new
+
+                # Add noise Optionally
+                x_obs = x + (np.random.normal(0.0, NOISE_STD, size=x.shape) if NOISE_STD > 0 else 0.0)
+
+                times.append(t)
+                xs.append(np.array(x_obs, dtype=float))
+                qs.append(q2i[q])
+                step_accepted = True
+                break
+            else:
+                # Invariant violated without activatable guard → reduce step (bisection)
+                dt *= 0.5
+                if dt < dt_min:
+                    raise SimError(
+                        f"Invariant of mode '{q}' violated (unable to find valid sub-step) towards t≈{t:.6f}"
+                    )
+
+        if not step_accepted:
+            raise SimError("No sub-step accepted (conflict invariants/guards).")
+
+    return np.array(times), np.vstack(xs), np.array(qs, dtype=int), q2i
