@@ -313,6 +313,17 @@ def main() -> None:
         print("[ERREUR] Fenêtrage vide. Allonge T_FINAL, réduis WIN/HORIZON, ou augmente DT.", file=sys.stderr)
         sys.exit(4)
         
+    # Save dataset & mappings
+    os.makedirs(OUT_DIR, exist_ok=True)
+    np.savez_compressed(OUT_DATASET, Xwin=Xwin, Qwin=Qwin, yx=yx, yq=yq)
+    with open(OUT_Q2I, "w", encoding="utf-8") as f:
+        json.dump(q2i, f, ensure_ascii=False, indent=2)
+    
+    print("[OK] Dataset created:", OUT_DATASET)
+    print("    Shapes:", "Xwin", Xwin.shape, "| Qwin", Qwin.shape, "| yx", yx.shape, "| yq", yq.shape)
+    print("[OK] Mapping of modes →", OUT_Q2I)
+    print(f"    Modes: {q2i}")
+    
     
 if __name__ == "__main__":
     main()
