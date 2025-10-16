@@ -4,6 +4,11 @@ import sys
 import os
 from typing import Any, Dict, List, Tuple
 import numpy as np
+import matplotlib.pyplot as plt  
+
+# --- Plotting config ---
+SHOW_PLOTS = True    # afficher à l'écran (plt.show())
+SAVE_PLOTS = True    # sauvegarder des images dans OUT_DIR
 
 
 #==================== CONFIG ====================
@@ -14,7 +19,7 @@ OUT_Q2I = os.path.join(OUT_DIR, "q2i.json")
 
 
 # Simulation parameters
-DT = 0.01 # time step
+DT = 0.001 # time step
 T_FINAL = 60.0 # final time
 NOISE_STD = 0.0 # noise
 
@@ -25,6 +30,10 @@ MAX_HALVES = 20  # max number of halvings of the time step
 # Window parameters
 WIN = 8 # window length
 HORIZON = 1 # prediction horizon
+
+# Plotting config 
+SHOW_PLOTS = True    # afficher à l'écran (plt.show())
+SAVE_PLOTS = True    # sauvegarder des images dans OUT_DIR
 # ===========================================================
 
 class SimError(Exception):
@@ -202,3 +211,108 @@ def simulate(data: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, 
             raise SimError("No sub-step accepted (conflict invariants/guards).")
 
     return np.array(times), np.vstack(xs), np.array(qs, dtype=int), q2i
+
+
+def plot_simulation(times: np.ndarray,
+                    xs: np.ndarray,
+                    qs: np.ndarray,
+                    q2i: Dict[str, int],
+                    var_names: List[str],
+                    out_dir: str) -> None:
+    """
+    Plot the simulation results: continuous states and discrete modes over time.
+    1 plot for continuous states, 1 plot for modes.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    i2q = {i: q for q, i in q2i.items()}
+
+    # -------- Figure 1: continuous states --------
+    plt.figure(figsize=(8, 4))
+    for k in range(xs.shape[1]):
+        plt.plot(times, xs[:, k], label=var_names[k] if k < len(var_names) else f"x{k}")
+    plt.xlabel("Time")
+    plt.ylabel("State value")
+    plt.title("Continuous states over time")
+    plt.legend(loc="best")
+    plt.grid(True)
+    if SAVE_PLOTS:
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "sim_states.png"), dpi=150)
+    if SHOW_PLOTS:
+        plt.show()
+    else:
+        plt.close()
+
+    # -------- Figure 2: discrete modes --------
+    plt.figure(figsize=(8, 3))
+    plt.step(times, qs, where="post")
+    plt.xlabel("Time")
+    plt.ylabel("Mode index")
+    plt.title("Discrete modes over time")
+    # Y ticks avec noms de modes
+    yticks = sorted(set(qs.tolist()))
+    yticklabels = [i2q[i] for i in yticks]
+    plt.yticks(yticks, yticklabels)
+    plt.grid(True)
+    if SAVE_PLOTS:
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "sim_modes.png"), dpi=150)
+    if SHOW_PLOTS:
+        plt.show()
+    else:
+        plt.close()
+
+
+def make_windows(times: np.ndarray,
+                 xs: np.ndarray,
+                 qs: np.ndarray,
+                 win: int = WIN,
+                 horizon: int = HORIZON):
+    """
+    Construit des paires (entrée -> cibles) pour l'entraînement:
+      - entrée  : fenêtre (win) sur x et q
+      - cibles  : x à +horizon et prochain mode (à +1)
+    """
+    Xwin, Qwin, yx, yq = [], [], [], []
+    T = len(times)
+    for i in range(0, T - win - horizon):
+        Xwin.append(xs[i:i + win, :])
+        Qwin.append(qs[i:i + win])
+        yx.append(xs[i + win + horizon - 1, :])  # predict x at horizon
+        yq.append(qs[i + win])                    # next mode
+    return np.array(Xwin), np.array(Qwin), np.array(yx), np.array(yq)
+
+
+def main() -> None:
+    # Load model
+    try:
+        with open(MODEL_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"[ERROR] File not found: {MODEL_PATH}", file=sys.stderr)
+        sys.exit(2)
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Invalid JSON: {e}", file=sys.stderr)
+        sys.exit(2)
+        
+    # Simulate
+    try:
+        times, xs, qs, q2i = simulate(data)
+    except SimError as e:
+        print(f"[ERREUR SIMU] {e}", file=sys.stderr)
+        sys.exit(3)
+    # Plot results
+    try:
+        plot_simulation(times, xs, qs, q2i, var_names=data.get("X", []), out_dir=OUT_DIR)
+    except Exception as e:
+        print(f"[WARN] Plotting failed: {e}", file=sys.stderr)
+        
+    # Create windows
+    Xwin, Qwin, yx, yq = make_windows(times, xs, qs, win=WIN, horizon=HORIZON)
+    if Xwin.size == 0:
+        print("[ERREUR] Fenêtrage vide. Allonge T_FINAL, réduis WIN/HORIZON, ou augmente DT.", file=sys.stderr)
+        sys.exit(4)
+        
+    
+if __name__ == "__main__":
+    main()

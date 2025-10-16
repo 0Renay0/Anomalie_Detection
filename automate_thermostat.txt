@@ -55,8 +55,8 @@
     "functions": {
         "flow_Q1": "def flow_Q1(x, t):          # cooling   \n    return [-x[0] + 50]\n",
         "flow_Q2": "def flow_Q2(x, t):        # heating \n    return [-1.5*x[0] + 130]\n",
-        "inv_Q1": "def inv_Q1(x):\n    return 10<x[0]<20\n",
-        "inv_Q2": "def inv_Q2(x):\n    return 10<x[0]<20\n",
+        "inv_Q1": "def inv_Q1(x):\n    return 50<=x[0]<=80.1\n",
+        "inv_Q2": "def inv_Q2(x):\n    return 50<=x[0]<=130\n",
         "guard_Q1_Q2": "def guard_Q1_Q2(x):\n    return x[0] <= 55    #70\n",
         "guard_Q2_Q1": "def guard_Q2_Q1(x):\n    return x[0] >= 80\n",
         "reset_none": "def reset_none(x):\n    return x[:]\n"
